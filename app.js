@@ -1,182 +1,170 @@
-const express = require("express");
-const commands = require("./data/commands.json");
-const { setNestedValue } = require("./utils/nestedHeaders");
+import React, { useState, useEffect } from "react";
+import MissoesAuto from "./components/MissoesAuto";
+import AuthService from "./services/authService";
 
-module.exports = function (sockets) {
-  const app = express();
-  const cors = require("cors");
-  const bcrypt = require("bcryptjs");
-  const jwt = require("jsonwebtoken");
-  const { prisma } = require("./src/lib/prisma"); // ajuste se o caminho for diferente
-  app.use(cors());
-  app.use(express.json());
-  app.use(cors({ origin: "http://localhost:5173" }));
-  const JWT_SECRET = process.env.JWT_SECRET || "dev-secret";
-
-  app.use((req, res, next) => {
-    res.header("Access-Control-Allow-Origin", "*");
-    res.header("Access-Control-Allow-Methods", "GET");
-    res.header(
-      "Access-Control-Allow-Headers",
-      "Origin, X-Requested-With, Content-Type, Accept",
-    );
-    next();
+function App() {
+  const [user, setUser] = useState(null);
+  const [credentials, setCredentials] = useState({
+    username: "",
+    password: "",
   });
+  const [loading, setLoading] = useState(false);
 
-  app.get("/:server/:command/:headers", async (req, res) => {
-    if (req.params.server in sockets) {
-      if (
-        sockets[req.params.server] !== null &&
-        sockets[req.params.server].connected.isSet
-      ) {
-        try {
-          const messageHeaders = JSON.parse(`{${req.params.headers}}`);
-          sockets[req.params.server].socket.sendJsonCommand(
-            req.params.command,
-            messageHeaders,
-          );
+  useEffect(() => {
+    checkLogin();
+  }, []);
 
-          let responseHeaders = {};
-          if (req.params.command in commands) {
-            for (const [messageKey, responsePath] of Object.entries(
-              commands[req.params.command],
-            )) {
-              if (messageKey in messageHeaders) {
-                setNestedValue(
-                  responseHeaders,
-                  responsePath,
-                  messageHeaders[messageKey],
-                );
-              }
-            }
-          } else {
-            responseHeaders = messageHeaders;
-          }
-
-          const response = await sockets[
-            req.params.server
-          ].socket.waitForJsonResponse(
-            req.params.command,
-            responseHeaders,
-            (timeout = 1000),
-          );
-          res.status(200).json({
-            server: req.params.server,
-            command: req.params.command,
-            return_code: response.payload.status,
-            content: response.payload.data,
-          });
-        } catch (error) {
-          console.log(error.message);
-          res.status(400).json({ error: "Invalid command or headers" });
-        }
-      } else {
-        res.status(500).json({ error: "Server not connected" });
+  const checkLogin = async () => {
+    const currentUser = AuthService.getCurrentUser();
+    if (currentUser) {
+      const session = await AuthService.checkSession();
+      if (session.loggedIn) {
+        setUser(currentUser);
       }
-    } else {
-      res.status(404).json({ error: "Server not found" });
     }
-  });
+  };
 
-  app.get("/status", (req, res) => {
-    const status = {};
-    for (const [server, socket] of Object.entries(sockets)) {
-      status[server] = socket.connected.isSet;
-    }
-    res.status(200).json(status);
-  });
-
-  app.get("/", (req, res) => res.status(200).send("API running"));
-  app.get("/api/health", (req, res) => res.json({ ok: true }));
-
-  app.get("/api/test-db", async (req, res) => {
-    const users = await prisma.user.findMany();
-    res.json(users);
-  });
-  app.post("/api/register", async (req, res) => {
-    const { email, password } = req.body || {};
-    if (!email || !password)
-      return res.status(400).json({ error: "email/password required" });
-
-    const hash = await bcrypt.hash(password, 10);
-
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    setLoading(true);
     try {
-      const user = await prisma.user.create({
-        data: { email, password: hash, credits: 0 },
-        select: { id: true, email: true, credits: true },
-      });
-      res.json(user);
-    } catch {
-      res.status(400).json({ error: "email already exists" });
+      const result = await AuthService.login(
+        credentials.username,
+        credentials.password,
+      );
+      if (result.success) {
+        setUser(result.player);
+      } else {
+        alert("Erro no login: " + result.message);
+      }
+    } catch (error) {
+      alert("Erro ao conectar com o servidor");
+    } finally {
+      setLoading(false);
     }
-  });
+  };
 
-  app.post("/api/login", async (req, res) => {
-    const { email, password } = req.body || {};
-    if (!email || !password)
-      return res.status(400).json({ error: "email/password required" });
+  const handleLogout = async () => {
+    await AuthService.logout();
+    setUser(null);
+  };
 
-    const user = await prisma.user.findUnique({ where: { email } });
-    if (!user) return res.status(401).json({ error: "invalid credentials" });
+  if (!user) {
+    return (
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          height: "100vh",
+          background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+        }}
+      >
+        <form
+          onSubmit={handleLogin}
+          style={{
+            background: "white",
+            padding: "40px",
+            borderRadius: "10px",
+            boxShadow: "0 10px 40px rgba(0,0,0,0.1)",
+            width: "300px",
+          }}
+        >
+          <h2 style={{ textAlign: "center", marginBottom: "30px" }}>
+            🎮 Login Goodgame Empire
+          </h2>
 
-    const ok = await bcrypt.compare(password, user.password);
-    if (!ok) return res.status(401).json({ error: "invalid credentials" });
+          <input
+            type="text"
+            placeholder="Usuário"
+            value={credentials.username}
+            onChange={(e) =>
+              setCredentials({ ...credentials, username: e.target.value })
+            }
+            style={{
+              width: "100%",
+              padding: "10px",
+              marginBottom: "15px",
+              borderRadius: "5px",
+              border: "1px solid #ddd",
+            }}
+            required
+          />
 
-    const token = jwt.sign({ userId: user.id }, JWT_SECRET, {
-      expiresIn: "7d",
-    });
+          <input
+            type="password"
+            placeholder="Senha"
+            value={credentials.password}
+            onChange={(e) =>
+              setCredentials({ ...credentials, password: e.target.value })
+            }
+            style={{
+              width: "100%",
+              padding: "10px",
+              marginBottom: "20px",
+              borderRadius: "5px",
+              border: "1px solid #ddd",
+            }}
+            required
+          />
 
-    res.json({
-      token,
-      user: { id: user.id, email: user.email, credits: user.credits },
-    });
-  });
-
-  function auth(req, res, next) {
-    const header = req.headers.authorization || "";
-    const token = header.startsWith("Bearer ") ? header.slice(7) : null;
-    if (!token) return res.status(401).json({ error: "missing token" });
-
-    try {
-      const payload = jwt.verify(token, JWT_SECRET);
-      req.userId = payload.userId;
-      next();
-    } catch {
-      return res.status(401).json({ error: "invalid token" });
-    }
+          <button
+            type="submit"
+            disabled={loading}
+            style={{
+              width: "100%",
+              padding: "12px",
+              background: "#667eea",
+              color: "white",
+              border: "none",
+              borderRadius: "5px",
+              fontSize: "16px",
+              cursor: "pointer",
+            }}
+          >
+            {loading ? "Conectando..." : "Conectar"}
+          </button>
+        </form>
+      </div>
+    );
   }
 
-  app.get("/api/me", auth, async (req, res) => {
-    const user = await prisma.user.findUnique({
-      where: { id: req.userId },
-      select: { id: true, email: true, credits: true, createdAt: true },
-    });
-    res.json(user);
-  });
+  return (
+    <div>
+      <div
+        style={{
+          background: "#333",
+          color: "white",
+          padding: "10px 20px",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+        }}
+      >
+        <h2>🎮 Empire Auto Bot</h2>
+        <div>
+          <span style={{ marginRight: "20px" }}>
+            👤 {user.nickname} (Level {user.level})
+          </span>
+          <button
+            onClick={handleLogout}
+            style={{
+              padding: "5px 15px",
+              background: "#ff4444",
+              color: "white",
+              border: "none",
+              borderRadius: "3px",
+              cursor: "pointer",
+            }}
+          >
+            Sair
+          </button>
+        </div>
+      </div>
 
-  app.get("/api/credits", auth, async (req, res) => {
-    const user = await prisma.user.findUnique({
-      where: { id: req.userId },
-      select: { credits: true },
-    });
-    res.json({ credits: user?.credits ?? 0 });
-  });
+      <MissoesAuto />
+    </div>
+  );
+}
 
-  app.get("/api/bots", auth, async (req, res) => {
-    const bots = await prisma.bot.findMany({
-      where: { userId: req.userId },
-      orderBy: { createdAt: "desc" },
-    });
-    res.json(bots);
-  });
-
-  app.post("/api/bots", auth, async (req, res) => {
-    const { name } = req.body || {};
-    const bot = await prisma.bot.create({
-      data: { name: name || "New bot", userId: req.userId },
-    });
-    res.json(bot);
-  });
-
-  return app;
-};
+export default App;
